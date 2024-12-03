@@ -70,15 +70,10 @@ async def clear(wks: gspread.Worksheet):
 
 
 def sort_values_by_headers(russian_headers, values, keys_headers):
-    print(russian_headers)
     header_to_key = swap(keys_headers)
-    print(header_to_key)
     sorted_keys = [header_to_key[header] for header in russian_headers]
-    print(sorted_keys)
     value_dict = dict(zip(keys_headers.keys(), values))
-    print(value_dict)
     sorted_values = [value_dict[key] for key in sorted_keys]
-    print(sorted_values)
     return sorted_values
 
 
@@ -340,6 +335,13 @@ class KeysTable:
             "key_type": "Тип ключа",
             "hardware_type": "Тип (Аппаратный)",
         }
+
+    async def get_by_name(self, name: str) -> Key | None:
+        keys = await self.get_all_keys()
+        for key in keys:
+            if key.key_name == name:
+                return key
+        return None
 
     async def setup_table(self):
         await self.check_has_free_rows(1)

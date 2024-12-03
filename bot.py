@@ -3,16 +3,20 @@ from aiogram.enums import ContentType
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup,
-    InlineKeyboardButton, Message, ReplyKeyboardRemove)
+    InlineKeyboardButton, Message, ReplyKeyboardRemove, ErrorEvent)
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Update
 import asyncio
 import sheets
 import logger
 from datetime import datetime
+
+
+# region Connection
+
 
 logger = logger.Logger()
 with open("credentials/telegram_bot.json", "r") as f:
@@ -25,15 +29,35 @@ keys_table = sheets.KeysTable()
 emp_table = sheets.EmployeesTable()
 
 
-def phone_format(x: str | int):
-    x = str(x)
-    if x.startswith("8") and len(x) == 11:  # 89293232859 -> +79293232859
-        x = "+7"+x
-    elif not x.startswith("7"):  # 9293232859 -> +79293232859
-        x = "+7"+x
-    elif not x.startswith("+"):  # 79293232859 -> +79293232859
-        x = "+"+x
-    return x
+async def main():
+    print("Starting bot")
+    await dp.start_polling(bot)
+
+
+# endregion
+
+
+# region Utils
+
+
+def escape_markdown(text: str):
+    escape_chars = ['_', '*', '[', '`']
+    for char in escape_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
+
+
+def phone_format(phone: str | int):
+    phone = str(phone)
+    digits = ''.join(filter(str.isdigit, phone))
+    if digits.startswith('8'):
+        digits = '7' + digits[1:]
+    elif digits.startswith('7'):
+        pass
+    else:
+        digits = '7' + digits
+    digits = digits[:11]
+    return f'+{digits}'
 
 
 async def has_role(role: str, user_id: str):
@@ -53,6 +77,21 @@ async def check_registration(user_id: str) -> bool:
     employees = await emp_table.get_all_employees()
     return any(emp.telegram == user_id for emp in employees)
 
+
+# endregion
+
+
+# region Backend
+
+@dp.error()
+async def error_handler(event: ErrorEvent):
+    print(event.exception)
+    print(event)
+    logger.err(event.exception, "Error in t2bot")
+    # await bot.send_message(event, "Произошла неизвестная ошибка, попробуйте еще раз позже.")
+
+
+# endregion
 
 # region Registration
 
@@ -174,24 +213,10 @@ async def confirm_data(callback_query: CallbackQuery, state: FSMContext):
 # region User Commands
 
 
-class FindKeyState(StatesGroup):
-    waiting_for_key = State()
-
-
 class GetKeyState(StatesGroup):
     waiting_for_key = State()
     waiting_for_comment = State()
     waiting_for_confirmation = State()
-
-
-@dp.message(Command("find_key"))
-async def find_key(message: types.Message, state: FSMContext):
-    if not await has_role("user", message.from_user.id):
-        await message.answer("Вы не имеете доступа к этой команде.")
-        return
-
-    await message.answer("Введите название или номер ключа для поиска")
-    await state.set_state(FindKeyState.waiting_for_key)
 
 
 @dp.message(Command("get_key"))
@@ -316,34 +341,94 @@ async def deny_key(callback: CallbackQuery) -> None:
     await callback.message.edit_text("Вы отклонили запрос на выдачу ключей.")
 
 
-def state_format(entry: sheets.Entry) -> str:
-    if entry.time_returned is None:
-        return (
-            f"Ключ: {entry.key_name}\n"
-            f"Этот ключ забрал: {entry.emp_firstname} {entry.emp_lastname}\n"
-            f"в: {entry.time_received.strftime('%H:%M (%d.%m.%Y)')}\n"
-            f"Тел. {phone(entry.emp_phone)}\n"
-            f"Комментарии: \"{entry.comment}\""
-        )
+async def state_format(entry: sheets.Entry, key_info: bool = True) -> str:
+    if key_info:
+        key = await keys_table.get_by_name(entry.key_name)
+        if key is None:
+            return await state_format(entry, key_info=False)
+        if entry.time_returned is None:
+            return (
+                f"*Ключ*: `{entry.key_name}`\n"
+                f"*  Состояние*: Не на месте\n"
+                f"*  Количество ключей*: `{key.count}`\n"
+                f"*  Тип ключа*: `{key.key_type}`\n"
+                f"*  Тип аппаратный*: `{key.hardware_type}`\n\n"
+                f"*Ключ выдан:*\n"
+                f"  *Имя*: `{entry.emp_firstname} {entry.emp_lastname}`\n"
+                f"  *Выдан в*: `{entry.time_received.strftime('%H:%M (%d.%m.%Y)')}`\n"
+                f"{f"  *Комментарии*: \"{escape_markdown(entry.comment)}\"\n" if entry.comment else ""}"
+                f"  *Контакт*: {phone_format(entry.emp_phone)}\n"
+            )
+        else:
+            return (
+                f"*Ключ*: `{entry.key_name}`\n"
+                f"*  Состояние*: Этот ключ сейчас на месте\n"
+                f"*  Количество ключей*: `{key.count}`\n"
+                f"*  Тип ключа*: `{key.key_type}`\n"
+                f"*  Тип аппаратный*: `{key.hardware_type}`\n\n"
+                f"*Последний пользователь:*\n"
+                f"  *Имя*: `{entry.emp_firstname} {entry.emp_lastname}`\n"
+                f"  *Взял в*: `{entry.time_received.strftime('%H:%M (%d.%m.%Y)')}`\n"
+                f"  *Вернул в*: `{entry.time_returned.strftime('%H:%M (%d.%m.%Y)')}`\n"
+                f"{f"  *Комментарии*: \"{escape_markdown(entry.comment)}\"\n" if entry.comment else ""}"
+                f"  *Контакт*: {phone_format(entry.emp_phone)}\n"
+            )
     else:
-        return (
-            f"Ключ: {entry.key_name}\n"
-            f"Сейчас этот ключ на месте\n\n"
-            f"В последний раз его брал: {entry.emp_firstname} {entry.emp_lastname}\n"
-            f"Забрал в: {entry.time_received.strftime('%H:%M (%d.%m.%Y)')}\n"
-            f"Вернул в: {entry.time_returned.strftime('%H:%M (%d.%m.%Y)')}\n"
-            f"Тел. {phone(entry.emp_phone)}\n"
-            f"Комментарии: \"{entry.comment}\""
-        )
+        if entry.time_returned is None:
+            return (
+                f"*Ключ*: `{entry.key_name}`\n"
+                f"*  Состояние*: Не на месте\n"
+                f"*Ключ выдан:*\n"
+                f"  *Имя*: `{entry.emp_firstname} {entry.emp_lastname}`\n"
+                f"  *Выдан в*: `{entry.time_received.strftime('%H:%M (%d.%m.%Y)')}`\n"
+                f"{f"  *Комментарии*: \"{escape_markdown(entry.comment)}\"\n" if entry.comment else ""}"
+                f"  *Контакт*: {phone_format(entry.emp_phone)}\n"
+            )
+        else:
+            return (
+                f"*Ключ*: `{entry.key_name}`\n"
+                f"*  Состояние*: Этот ключ сейчас на месте\n"
+                f"*Последний пользователь:*\n"
+                f"  *Имя*: `{entry.emp_firstname} {entry.emp_lastname}`\n"
+                f"  *Взял в*: `{entry.time_received.strftime('%H:%M (%d.%m.%Y)')}`\n"
+                f"  *Вернул в*: `{entry.time_returned.strftime('%H:%M (%d.%m.%Y)')}`\n"
+                f"{f"  *Комментарии*: \"{escape_markdown(entry.comment)}\"\n" if entry.comment else ""}"
+                f"  *Контакт*: {phone_format(entry.emp_phone)}\n"
+            )
 
 
 async def get_key_state_str(key_name: str) -> str:
     entries = await keys_accounting_table.get_all_entries()
     key_entries = [entry for entry in entries if entry.key_name == key_name]
     if not key_entries:
-        return "По этому ключу пока нет записей, скорее всего он на месте"
+        key = await keys_table.get_by_name(key_name)
+        if key is None:
+            return "По этому ключу нет записей в истории и в таблице ключей"
+        else:
+            return (
+                f"*Ключ*: `{key_name}`\n"
+                f"*  Состояние*: На месте\n"
+                f"*  Количество ключей*: `{key.count}`\n"
+                f"*  Тип ключа*: `{key.key_type}`\n"
+                f"*  Тип аппаратный*: `{key.hardware_type}`\n\n"
+                f"Нет информации по последнему пользователю\n"
+            )
     last_entry = key_entries[-1]
-    return state_format(last_entry)
+    return await state_format(last_entry)
+
+
+class FindKeyState(StatesGroup):
+    waiting_for_key = State()
+
+
+@dp.message(Command("find_key"))
+async def find_key(message: types.Message, state: FSMContext):
+    if not await has_role("user", message.from_user.id):
+        await message.answer("Вы не имеете доступа к этой команде.")
+        return
+
+    await message.answer("Введите название или номер ключа для поиска")
+    await state.set_state(FindKeyState.waiting_for_key)
 
 
 @dp.message(FindKeyState.waiting_for_key)
@@ -371,8 +456,95 @@ async def waiting_for_key_name(message: types.Message, state: FSMContext):
         # await state.clear()
         return
 
-    await msg.edit_text(await get_key_state_str(similarities[0]))
+    await msg.delete(),
+    await message.answer(
+        await get_key_state_str(similarities[0]),
+        parse_mode="Markdown",
+        reply_markup=types.ReplyKeyboardRemove()),
     await state.clear()
+
+
+class GetKeyHistoryState(StatesGroup):
+    waiting_for_key = State()
+
+
+@dp.message(Command("key_history"))
+async def get_key_history(message: types.Message, state: FSMContext):
+    if not await has_role("user", message.from_user.id):
+        await message.answer("Вы не имеете доступа к этой команде.")
+        return
+
+    await message.answer("Введите название или номер ключа для поиска")
+    await state.set_state(GetKeyHistoryState.waiting_for_key)
+
+
+@dp.message(GetKeyHistoryState.waiting_for_key)
+async def waiting_for_key_name(message: types.Message, state: FSMContext):
+    msg = await message.answer("Получение истории...")
+    await state.update_data(key=message.text)
+    entries = await keys_accounting_table.get_all_entries()
+    keys_obj = await keys_table.get_all_keys()
+    key_names = {entry.key_name for entry in entries} | {key.key_name for key in keys_obj}
+    similarities = await sheets.find_similar(message.text, key_names)
+
+    if not similarities:
+        await msg.edit_text("Ключ не найден")
+        await state.clear()
+        return
+
+    if len(similarities) > 1:
+        kb = []
+        for sim in similarities:
+            kb.append([KeyboardButton(text=sim)])
+        await msg.delete()
+        await message.answer(
+            "Выберите ключ из найденных:",
+            reply_markup=ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=True))
+        return
+
+    await msg.delete()
+    history_msg_strs = await get_key_history_str(similarities[0])
+    for msg in history_msg_strs:
+        await message.answer(msg, parse_mode="Markdown", reply_markup=types.ReplyKeyboardRemove())
+    await state.clear()
+
+
+async def get_key_history_str(key_name: str):
+    key, entries = await asyncio.gather(
+        keys_table.get_by_name(key_name),
+        keys_accounting_table.get_all_entries()
+    )
+    key_entries = [entry for entry in entries if entry.key_name == key_name]
+    response_strs = [""]
+    if key:
+        response_strs[-1] = (
+            f"*Ключ*: `{key_name}`\n"
+            f"*Количество ключей*: `{key.count}`\n"
+            f"*Тип ключа*: `{key.key_type}`\n"
+            f"*Тип аппаратный*: `{key.hardware_type}`\n"
+            f"*Этот ключ брали*: {len(key_entries)} раз(а)\n\n"
+        )
+    else:
+        response_strs[-1] = (
+            f"*Ключ*: `{key_name}`\n"
+            f"*Этот ключ брали*: {len(key_entries)} раз(а)\n\n"
+        )
+    if not key_entries:
+        response_strs[-1] += "По этому ключу нет записей"
+        return response_strs
+    for entry in key_entries:
+        if len(response_strs[-1]) > 2000:
+            response_strs.append("")
+        response_strs[-1] += (
+            f"*Имя*: `{entry.emp_firstname} {entry.emp_lastname}`\n"
+            f"*| Взял в*: `{entry.time_received.strftime('%H:%M (%d.%m.%Y)')}`\n"
+            f"*| Вернул в*: `{entry.time_returned.strftime('%H:%M (%d.%m.%Y)')}`\n"
+            f"*| Контакт*: {phone_format(entry.emp_phone)}\n"
+            f"{f"| *Комментарии*: \"{escape_markdown(entry.comment)}\"\n" if entry.comment else ""}"
+        )
+        response_strs[-1] += "\n"
+
+    return response_strs
 
 
 # endregion
@@ -398,7 +570,7 @@ async def not_returned(message: types.Message):
 
     for key in keys:
         kb = [[InlineKeyboardButton(text="Вернуть", callback_data=f"return_key:{key.key_name}")]]
-        await message.answer(state_format(key), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        await message.answer(await state_format(key, False), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 
 @dp.callback_query(F.data.startswith("return_key"))
@@ -409,12 +581,3 @@ async def return_key(callback: CallbackQuery, state: FSMContext):
 
 
 # endregion
-
-
-async def main():
-    print("Starting bot")
-    await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
