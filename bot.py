@@ -25,6 +25,17 @@ keys_table = sheets.KeysTable()
 emp_table = sheets.EmployeesTable()
 
 
+def phone_format(x: str | int):
+    x = str(x)
+    if x.startswith("8") and len(x) == 11:  # 89293232859 -> +79293232859
+        x = "+7"+x
+    elif not x.startswith("7"):  # 9293232859 -> +79293232859
+        x = "+7"+x
+    elif not x.startswith("+"):  # 79293232859 -> +79293232859
+        x = "+"+x
+    return x
+
+
 async def has_role(role: str, user_id: str):
     user_id = str(user_id)
     employees = await emp_table.get_all_employees()
@@ -143,7 +154,7 @@ async def confirm_data(callback_query: CallbackQuery, state: FSMContext):
         await emp_table.new_employee(
             user_data["name"],
             user_data["surname"],
-            user_data["phone"],
+            phone_format(user_data["phone"]),
             callback_query.from_user.id,
             "user",
         )
@@ -224,7 +235,9 @@ async def get_key_name(message: types.Message, state: FSMContext):
             for sim in similarities:
                 kb.append([KeyboardButton(text=sim)])
             await msg.delete()
-            await message.answer("Выберите ключ из найденных:", reply_markup=ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=True))
+            await message.answer("Выберите ключ из найденных:",
+                                 reply_markup=ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True,
+                                                                  one_time_keyboard=True))
         else:
             await msg.delete()
             await message.answer("Ключ не найден")
@@ -309,7 +322,7 @@ def state_format(entry: sheets.Entry) -> str:
             f"Ключ: {entry.key_name}\n"
             f"Этот ключ забрал: {entry.emp_firstname} {entry.emp_lastname}\n"
             f"в: {entry.time_received.strftime('%H:%M (%d.%m.%Y)')}\n"
-            f"Тел. {entry.emp_phone}\n"
+            f"Тел. {phone(entry.emp_phone)}\n"
             f"Комментарии: \"{entry.comment}\""
         )
     else:
@@ -319,7 +332,7 @@ def state_format(entry: sheets.Entry) -> str:
             f"В последний раз его брал: {entry.emp_firstname} {entry.emp_lastname}\n"
             f"Забрал в: {entry.time_received.strftime('%H:%M (%d.%m.%Y)')}\n"
             f"Вернул в: {entry.time_returned.strftime('%H:%M (%d.%m.%Y)')}\n"
-            f"Тел. {entry.emp_phone}\n"
+            f"Тел. {phone(entry.emp_phone)}\n"
             f"Комментарии: \"{entry.comment}\""
         )
 
@@ -352,7 +365,9 @@ async def waiting_for_key_name(message: types.Message, state: FSMContext):
         for sim in similarities:
             kb.append([KeyboardButton(text=sim)])
         await msg.delete()
-        await message.answer("Выберите ключ из найденных:", reply_markup=ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=True))
+        await message.answer("Выберите ключ из найденных:",
+                             reply_markup=ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True,
+                                                              one_time_keyboard=True))
         # await state.clear()
         return
 

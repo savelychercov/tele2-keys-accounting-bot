@@ -36,6 +36,10 @@ async def find_similar(query, strings):
     return matches[:5]
 
 
+async def add_worksheet(spreadsheet: gspread.Spreadsheet, title: str, rows: int, cols: int, index: int = None):
+    await asyncio.to_thread(spreadsheet.add_worksheet, title=title, rows=rows, cols=cols, index=index)
+
+
 async def update(wks: gspread.Worksheet, cell_str: str, values: list[list]):
     await asyncio.to_thread(wks.update, cell_str, values)
 
@@ -66,10 +70,15 @@ async def clear(wks: gspread.Worksheet):
 
 
 def sort_values_by_headers(russian_headers, values, keys_headers):
+    print(russian_headers)
     header_to_key = swap(keys_headers)
+    print(header_to_key)
     sorted_keys = [header_to_key[header] for header in russian_headers]
+    print(sorted_keys)
     value_dict = dict(zip(keys_headers.keys(), values))
+    print(value_dict)
     sorted_values = [value_dict[key] for key in sorted_keys]
+    print(sorted_values)
     return sorted_values
 
 
@@ -121,10 +130,48 @@ if gs is None:
 
 
 spreadsheet = None
+tables_data = None
 if spreadsheet is None:
     with open(tables_path, "r", encoding="utf-8") as f:
         tables_data = json.load(f)
     spreadsheet = gs.open_by_url(tables_data["spreadsheet_url"])
+
+
+# endregion
+
+
+# region Functions
+
+
+async def change_spreadsheet(url: str):
+    global spreadsheet, tables_data
+
+    try:
+        sp = gs.open_by_url(url)
+    except gspread.exceptions.SpreadsheetNotFound:
+        raise ValueError(f"Spreadsheet {url} not found")
+    spreadsheet = sp
+
+    tables_data["spreadsheet_url"] = url
+
+    await add_worksheet(sp, tables_data["keys_accounting_wks"], 1000, 20)
+    await add_worksheet(sp, tables_data["keys_wks"], 1000, 20)
+    await add_worksheet(sp, tables_data["employees_wks"], 1000, 20)
+
+    with open(tables_path, "w", encoding="utf-8") as f:
+        json.dump(tables_data, f)
+
+    kat = KeysAccountingTable()
+    keys = KeysTable()
+    employees = EmployeesTable()
+
+    await asyncio.gather(
+        kat.setup_table(),
+        keys.setup_table(),
+        employees.setup_table(),
+    )
+
+    return kat, keys, employees
 
 
 # endregion
@@ -278,6 +325,8 @@ class KeysAccountingTable:
 class Key:
     key_name: str
     count: int
+    key_type: str
+    hardware_type: str
 
 
 class KeysTable:
@@ -288,6 +337,8 @@ class KeysTable:
         self.keys_headers = {
             "key_name": "Ключ",
             "count":    "Количество",
+            "key_type": "Тип ключа",
+            "hardware_type": "Тип (Аппаратный)",
         }
 
     async def setup_table(self):
@@ -325,6 +376,8 @@ class KeysTable:
         keys = []
         for row in rows:
             row = [x.strip() for x in row][0:len(self.keys_headers)]
+            while len(row) < len(self.keys_headers):
+                row.append("")
             row = sort_values_by_headers(headers, row, self.keys_headers)
             try:
                 keys.append(Key(*row))
@@ -350,7 +403,10 @@ class Employee:
         if isinstance(roles, list):
             self.roles = roles
         elif isinstance(roles, str):
-            self.roles = list(map(str.strip, roles.split(", ")))
+            if roles.strip() == "":
+                self.roles = []
+            else:
+                self.roles = list(map(str.strip, roles.split(", ")))
         else:
             self.roles = []
 
@@ -360,7 +416,7 @@ class Employee:
             f"Name: {self.first_name} {self.last_name}\n"
             f"Phone number: {self.phone_number}\n"
             f"Telegram: {self.telegram}\n"
-            f"Roles: {', '.join(self.roles)}"
+            f"Roles: {', '.join(self.roles) if self.roles else "NO ROLES"}"
             "\n----------\n"
         )
 
@@ -467,13 +523,13 @@ async def main():
     await clear(kt.wks)
     await kt.setup_table()
     for i in range(10):
-        await kt.new_key(f"000{i}", random.randint(1, 4))
+    await kt.new_key(f"000{i}", random.randint(1, 4))
     print(await kt.get_all_keys())"""
 
     et = EmployeesTable()
     # await clear(et.wks)
     # await et.setup_table()
-    await et.new_employee("Савелий1", "Алексеевич1", "+7 (999) 999-99-99", "test!", ["admin"])
+    # await et.new_employee("Савелий1", "Алексеевич1", "+7 (999) 999-99-99", "test!", ["admin"])
     print(await et.get_all_employees())
 
 if __name__ == "__main__":

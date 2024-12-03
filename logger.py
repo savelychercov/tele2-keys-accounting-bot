@@ -55,8 +55,7 @@ class Logger:
         if markdown: params["parse_mode"] = "MarkdownV2"
         resp = requests.post(url, params=params)
         if resp.status_code != 200:
-            print(resp.text)
-            self.log(f"Traceback:\n{text}", markdown=False)
+            raise Exception(f"Failed to send log to Telegram: {resp.status_code} {resp.text}")
 
     def err(self, error: Exception, additional_text: str = ""):
         traceback_str = ''.join(traceback.format_exception(
