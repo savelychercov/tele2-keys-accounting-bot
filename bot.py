@@ -3,16 +3,15 @@ from aiogram.enums import ContentType
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup,
-    InlineKeyboardButton, Message, ReplyKeyboardRemove, ErrorEvent)
+    InlineKeyboardButton, Message, ErrorEvent)
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Update
+from aiogram.types import CallbackQuery
 import asyncio
 import sheets
 import logger
-from datetime import datetime
 
 
 # region Connection
@@ -92,6 +91,30 @@ async def error_handler(event: ErrorEvent):
 
 
 # endregion
+
+
+# region General Commands
+
+
+class FeedbackState(StatesGroup):
+    waiting_for_feedback = State()
+
+
+@dp.message(Command("feedback"))
+async def send_feedback(message: types.Message, state: FSMContext):
+    await message.answer("Напишите ваш отзыв или предложение:")
+    await state.set_state(FeedbackState.waiting_for_feedback)
+
+
+@dp.message(FeedbackState.waiting_for_feedback)
+async def get_feedback(message: types.Message, state: FSMContext):
+    logger.log(f"New feedback:\nFrom: {message.from_user.first_name} {message.from_user.last_name} (@{message.from_user.username})\n\n```\n{message.text}```")
+    await message.answer("Отправлено.")
+    await state.clear()
+
+
+# endregion
+
 
 # region Registration
 
@@ -227,12 +250,16 @@ async def get_key(message: types.Message, state: FSMContext):
 
     emp = await emp_table.get_by_telegram(message.from_user.id)
     await state.update_data(emp=emp)
-    await message.answer("Введите название ключа")
+    await message.answer("Введите название ключа\n(/cancel для отмены)")
     await state.set_state(GetKeyState.waiting_for_key)
 
 
 @dp.message(GetKeyState.waiting_for_key)
 async def get_key_name(message: types.Message, state: FSMContext):
+    if message.text == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=types.ReplyKeyboardRemove())
+        return
     msg = await message.answer("Поиск ключа...", reply_markup=types.ReplyKeyboardRemove())
     key_names = {key.key_name for key in await keys_table.get_all_keys()}
     not_returned_keys = {key.key_name for key in await keys_accounting_table.get_not_returned_keys()}
@@ -253,7 +280,7 @@ async def get_key_name(message: types.Message, state: FSMContext):
         await msg.delete()
         await message.answer(
             f"Ключ: {key_name}\n"
-            f"Теперь введите комментарий")
+            f"Теперь введите комментарий\n(/empty - без комментария)\n(/cancel для отмены)")
         await state.set_state(GetKeyState.waiting_for_comment)
         return
     else:
@@ -273,7 +300,14 @@ async def get_key_name(message: types.Message, state: FSMContext):
 
 @dp.message(GetKeyState.waiting_for_comment)
 async def get_key_comment(message: types.Message, state: FSMContext):
-    await state.update_data(comment=message.text)
+    if message.text == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=types.ReplyKeyboardRemove())
+        return
+    if message.text == "/empty":
+        await state.update_data(comment=None)
+    else:
+        await state.update_data(comment=message.text)
 
     msg = await message.answer("Обработка...")
 
@@ -668,7 +702,7 @@ async def not_returned(message: types.Message):
 
 
 @dp.callback_query(F.data.startswith("return_key"))
-async def return_key(callback: CallbackQuery, state: FSMContext):
+async def return_key(callback: CallbackQuery):
     key_name = callback.data.split(":")[1]
     await keys_accounting_table.set_return_time_by_key_name(key_name)
     await callback.message.edit_text("Время возврата записано.")
