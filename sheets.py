@@ -26,10 +26,16 @@ last_update_cell = (1, 8)
 # region Utils
 
 
-async def find_similar(query, strings):
-    def similarity(a, b):
-        return SequenceMatcher(None, a, b).ratio()
-    matches = [s for s in strings if query in s]
+def flip(text: str):
+    return " ".join(text.split(" ")[::-1])
+
+
+def similarity(a, b):
+    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+
+async def find_similar(query: str, strings: list[str]) -> list[str]:
+    matches = [s for s in strings if query.lower() in s.lower()]
     if not matches:
         scored_matches = sorted(strings, key=lambda s: similarity(query, s), reverse=True)
         matches = [s for s in scored_matches if similarity(query, s) > 0.5]
@@ -501,6 +507,11 @@ class EmployeesTable:
             if "security" in employee.roles:
                 return employee
 
+    async def get_by_name(self, first_name: str, last_name: str):
+        employees = await self.get_all_employees()
+        for employee in employees:
+            if employee.first_name == first_name and employee.last_name == last_name:
+                return employee
 
 # endregion
 

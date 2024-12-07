@@ -85,9 +85,9 @@ async def check_registration(user_id: str) -> bool:
 
 @dp.error()
 async def error_handler(event: ErrorEvent):
-    print(event.exception)
-    print(event)
-    logger.err(event.exception, "Error in t2bot")
+    logger.err(event.exception)
+    if hasattr(event, "message"):
+        await event.message.answer("Произошла неизвестная ошибка, попробуйте еще раз позже.")
     # await bot.send_message(event, "Произошла неизвестная ошибка, попробуйте еще раз позже.")
 
 
@@ -237,16 +237,18 @@ async def get_key_name(message: types.Message, state: FSMContext):
     key_names = {key.key_name for key in await keys_table.get_all_keys()}
     not_returned_keys = {key.key_name for key in await keys_accounting_table.get_not_returned_keys()}
     similarities = await sheets.find_similar(message.text, key_names)
-    if message.text in not_returned_keys:
-        await msg.delete()
-        await message.answer("Этот ключ уже взят")
-        await state.clear()
-        return
-    elif message.text in key_names or len(similarities) == 1:
+
+    if message.text in key_names or len(similarities) == 1:
         if similarities:
             key_name = similarities[0]
         else:
             key_name = message.text
+        if key_name in not_returned_keys:
+            await msg.delete()
+            await message.answer("Этот ключ уже взят:")
+            await message.answer(await get_key_state_str(key_name), reply_markup=types.ReplyKeyboardRemove(), parse_mode="Markdown")
+            await state.clear()
+            return
         await state.update_data(key=key_name)
         await msg.delete()
         await message.answer(
@@ -324,8 +326,8 @@ async def approve_key(callback: CallbackQuery) -> None:
     await callback.message.edit_text("Вы подтвердили выдачу ключей.")
     await keys_accounting_table.new_entry(
         key_name,
-        emp.last_name,
         emp.first_name,
+        emp.last_name,
         emp.phone_number,
         comment=comment,
     )
@@ -537,9 +539,101 @@ async def get_key_history_str(key_name: str):
             response_strs.append("")
         response_strs[-1] += (
             f"*Имя*: `{entry.emp_firstname} {entry.emp_lastname}`\n"
-            f"*| Взял в*: `{entry.time_received.strftime('%H:%M (%d.%m.%Y)')}`\n"
-            f"*| Вернул в*: `{entry.time_returned.strftime('%H:%M (%d.%m.%Y)')}`\n"
-            f"*| Контакт*: {phone_format(entry.emp_phone)}\n"
+            f"| *Взял в*: `{entry.time_received.strftime('%H:%M (%d.%m.%Y)')}`\n"
+            f"| *Вернул в*: `{entry.time_returned.strftime('%H:%M (%d.%m.%Y)')}`\n"
+            f"| *Контакт*: {phone_format(entry.emp_phone)}\n"
+            f"{f"| *Комментарии*: \"{escape_markdown(entry.comment)}\"\n" if entry.comment else ""}"
+        )
+        response_strs[-1] += "\n"
+
+    return response_strs
+
+
+class GetEmpHistoryState(StatesGroup):
+    waiting_for_name = State()
+
+
+@dp.message(Command("emp_history"))
+async def get_emp_history(message: types.Message, state: FSMContext):
+    if not await has_role("user", message.from_user.id):
+        await message.answer("Вы не имеете доступа к этой команде.")
+        return
+
+    await message.answer("Введите ФИ сотрудника для поиска")
+    await state.set_state(GetEmpHistoryState.waiting_for_name)
+
+
+@dp.message(GetEmpHistoryState.waiting_for_name)
+async def waiting_for_emp_name(message: types.Message, state: FSMContext):
+    msg = await message.answer("Получение истории...")
+    await state.update_data(key=message.text)
+    entries = await keys_accounting_table.get_all_entries()
+    emp_obj = await emp_table.get_all_employees()
+    emp_names = (
+        {f"{entry.emp_firstname} {entry.emp_lastname}" for entry in entries} |
+        {f"{emp.first_name} {emp.last_name}" for emp in emp_obj}
+    )
+    similarities = list(
+        set(await sheets.find_similar(message.text, emp_names)) |
+        set(await sheets.find_similar(sheets.flip(message.text), emp_names))
+    )
+
+    if not similarities:
+        print("No similarities found")
+        await msg.edit_text("Сотрудник не найден")
+        await state.clear()
+        return
+
+    if len(similarities) > 1:
+        kb = []
+        for sim in similarities:
+            kb.append([KeyboardButton(text=sim)])
+        await msg.delete()
+        await message.answer(
+            "Выберите из найденных:",
+            reply_markup=ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=True))
+        return
+
+    await msg.delete()
+    history_msg_strs = await get_emp_history_str(similarities[0])
+    for msg in history_msg_strs:
+        await message.answer(msg, parse_mode="Markdown", reply_markup=types.ReplyKeyboardRemove())
+    await state.clear()
+
+
+async def get_emp_history_str(emp_name: str):
+    first_name, last_name = emp_name.split(" ", 1)
+    emp, entries = await asyncio.gather(
+        emp_table.get_by_name(first_name, last_name),
+        keys_accounting_table.get_all_entries()
+    )
+    emp_entries = [entry for entry in entries if entry.emp_firstname == first_name and entry.emp_lastname == last_name]
+    response_strs = [""]
+    if emp:
+        tg = await bot.get_chat(emp.telegram)
+        response_strs[-1] = (
+            f"*Имя*: `{emp.first_name} {emp.last_name}`\n"
+            f"*Телефон*: {phone_format(emp.phone_number)}\n"
+            f"{f"*Телеграм*: @{tg.username}\n" if tg.username else ""}"
+            f"*Роли*: {', '.join(emp.roles) if emp.roles else 'Нет'}\n"
+            f"*Этот сотрудник брал ключи*: {len(emp_entries)} раз(а)\n\n"
+        )
+    else:
+        response_strs[-1] = (
+            f"*Имя*: `{first_name} {last_name}`\n"
+            f"*Этот сотрудник брал ключи*: {len(emp_entries)} раз(а)\n\n"
+        )
+    if not emp_entries:
+        response_strs[-1] += "По этому сотруднику нет записей"
+        return response_strs
+    for entry in emp_entries:
+        if len(response_strs[-1]) > 2000:
+            response_strs.append("")
+        response_strs[-1] += (
+            f"*Ключ*: `{entry.key_name}`\n"
+            f"| *Взял в*: `{entry.time_received.strftime('%H:%M (%d.%m.%Y)')}`\n"
+            f"{f"| *Вернул в*: `{entry.time_returned.strftime('%H:%M (%d.%m.%Y)')}`\n" if entry.time_returned else ""}"
+            f"| *Контакт*: {phone_format(entry.emp_phone)}\n"
             f"{f"| *Комментарии*: \"{escape_markdown(entry.comment)}\"\n" if entry.comment else ""}"
         )
         response_strs[-1] += "\n"
