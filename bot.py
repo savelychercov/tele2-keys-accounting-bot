@@ -12,24 +12,36 @@ from aiogram.types import CallbackQuery
 import asyncio
 import sheets
 import logger
+import os
+import sys
+
+
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_path, relative_path)
 
 
 # region Connection
 
-
 logger = logger.Logger()
-with open("credentials/telegram_bot.json", "r") as f:
+print("Setting bot token")
+with open(resource_path(os.path.join("credentials", "telegram_bot.json")), "r") as f:
     API_TOKEN = json.load(f)["telegram_apikey"]
 dp = Dispatcher(storage=MemoryStorage())
 bot: Bot = Bot(API_TOKEN)
+print("Bot connected")
 
+
+print("Connecting to worksheets")
 keys_accounting_table = sheets.KeysAccountingTable()
 keys_table = sheets.KeysTable()
 emp_table = sheets.EmployeesTable()
+print("Worksheets connected")
 
 
 async def main():
-    print("Starting bot")
+    print(f"Bot \'{(await bot.get_me()).username}\' started")
     await dp.start_polling(bot)
 
 

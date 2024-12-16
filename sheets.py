@@ -8,14 +8,23 @@ import logger
 import json
 import random
 from difflib import SequenceMatcher
+import os
+import sys
+
+
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_path, relative_path)
 
 
 # region Constants
 
 
 datetime_format = "%d.%m.%Y %H:%M:%S"
-credentials_path = "credentials/gspread_credentials.json"
-tables_path = "credentials/spreadsheet_tables.json"
+
+credentials_path = resource_path(os.path.join("credentials", "gspread_credentials.json"))
+tables_path = resource_path(os.path.join("credentials", "spreadsheet_tables.json"))
 last_update_cell = (1, 8)
 # mail keysspreadsheetsbot@keysspreadsheetsbot.iam.gserviceaccount.com
 
@@ -127,6 +136,7 @@ def singleton(cls):
 logger = logger.Logger()
 gs = None
 if gs is None:
+    print("Setting gspread credentials")
     gs = gspread.service_account(filename=credentials_path)
 
 
@@ -135,7 +145,9 @@ tables_data = None
 if spreadsheet is None:
     with open(tables_path, "r", encoding="utf-8") as f:
         tables_data = json.load(f)
+    print(f"Opening spreadsheet")
     spreadsheet = gs.open_by_url(tables_data["spreadsheet_url"])
+    print(f"Spreadsheet \'{spreadsheet.title}\' opened")
 
 
 # endregion
@@ -363,7 +375,7 @@ class KeysTable:
             await add_rows(self.wks, rows_count - current_rows)
 
     async def new_key(self, key_name, count):
-        await self.add_key(Key(key_name, count))
+        await self.add_key(Key(key_name, count, "None", "None"))
 
     async def add_key(self, key_obj: Key):
         insert_row = len(await col_values(self.wks, 1)) + 1

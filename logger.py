@@ -1,8 +1,16 @@
 import requests
 import traceback
 import json
+import os
+import sys
 
 loaded = False
+
+
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_path, relative_path)
 
 
 def singleton(cls):
@@ -18,7 +26,7 @@ def singleton(cls):
 
 @singleton
 class Logger:
-    def __init__(self, credentials_path="credentials/logger.json"):
+    def __init__(self, credentials_path=resource_path(os.path.join("credentials", "logger.json"))):
 
         with open(credentials_path, "r") as f:
             logger_config = json.load(f)
