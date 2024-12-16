@@ -473,7 +473,7 @@ class EmployeesTable:
             last_name: str,
             phone: str,
             telegram: str,
-            roles: list[str]
+            roles: list[str] = None
     ):
         await self.add_employee(Employee(first_name, last_name, phone, telegram, roles))
 

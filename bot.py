@@ -1,14 +1,15 @@
 import json
-from aiogram.enums import ContentType
+from aiogram.enums import ContentType, ChatAction
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup,
-    InlineKeyboardButton, Message, ErrorEvent)
+    InlineKeyboardButton, Message, ErrorEvent, Poll)
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery
+from aiogram.dispatcher.middlewares.base import BaseMiddleware
 import asyncio
 import sheets
 import logger
@@ -41,7 +42,6 @@ print("Worksheets connected")
 
 
 async def main():
-    print(f"Bot \'{(await bot.get_me()).username}\' started")
     await dp.start_polling(bot)
 
 
@@ -100,6 +100,30 @@ async def error_handler(event: ErrorEvent):
     if hasattr(event, "message"):
         await event.message.answer("Произошла неизвестная ошибка, попробуйте еще раз позже.")
     # await bot.send_message(event, "Произошла неизвестная ошибка, попробуйте еще раз позже.")
+
+
+@dp.startup()
+async def on_startup(*args, **kwargs):
+    print(f"Bot \'{(await bot.get_me()).username}\' started")
+
+
+@dp.shutdown()
+async def on_shutdown(*args, **kwargs):
+    print(f"Bot \'{(await bot.get_me()).username}\' stopped")
+
+
+class LogCommandsMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event: Message, data: dict):
+        print(f"Message from {event.from_user.username} ({event.from_user.id}): {event.text}")
+        return await handler(event, data)
+
+
+dp.message.middleware.register(LogCommandsMiddleware())
+
+
+@dp.poll()
+async def handle_poll(poll: Poll):
+    print(f"Poll received: {poll.id}")
 
 
 # endregion
@@ -230,7 +254,7 @@ async def confirm_data(callback_query: CallbackQuery, state: FSMContext):
             user_data["surname"],
             phone_format(user_data["phone"]),
             callback_query.from_user.id,
-            "user",
+            # "user",
         )
     except Exception as e:
         print(e)
@@ -238,7 +262,7 @@ async def confirm_data(callback_query: CallbackQuery, state: FSMContext):
         await callback_query.answer("Произошла ошибка при сохранении данных.")
         return
     await callback_query.message.edit_reply_markup(reply_markup=None)
-    await callback_query.answer("Данные сохранены.")
+    await callback_query.answer("Данные сохранены, свяжитесь с администратором чтобы получить роли для доступа к командам бота")
     await state.clear()
 
 
@@ -710,7 +734,7 @@ async def not_returned(message: types.Message):
 
     for key in keys:
         kb = [[InlineKeyboardButton(text="Вернуть", callback_data=f"return_key:{key.key_name}")]]
-        await message.answer(await state_format(key, False), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        await message.answer(await state_format(key, False), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
 
 
 @dp.callback_query(F.data.startswith("return_key"))
@@ -721,3 +745,8 @@ async def return_key(callback: CallbackQuery):
 
 
 # endregion
+
+
+@dp.message()
+async def echo(message: types.Message):
+    await message.answer("Неизвестная команда")
