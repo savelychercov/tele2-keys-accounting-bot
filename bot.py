@@ -186,14 +186,16 @@ async def send_welcome(message: types.Message, state: FSMContext):
 
 @dp.message(RegistrationState.waiting_for_name)
 async def get_name(message: types.Message, state: FSMContext):
-    await state.update_data(name=message.text)
+    name = message.text.replace(" ", "")
+    await state.update_data(name=name)
     await message.answer("Теперь введите вашу фамилию:")
     await state.set_state(RegistrationState.waiting_for_surname)
 
 
 @dp.message(RegistrationState.waiting_for_surname)
 async def get_surname(message: types.Message, state: FSMContext):
-    await state.update_data(surname=message.text)
+    surname = message.text.replace(" ", "")
+    await state.update_data(surname=surname)
     kb = [
         [KeyboardButton(text="Отправить номер телефона", request_contact=True)],
         [KeyboardButton(text="Ввести номер телефона вручную")]
@@ -341,7 +343,7 @@ async def get_key_comment(message: types.Message, state: FSMContext):
         await message.answer("Отменено.", reply_markup=types.ReplyKeyboardRemove())
         return
     if message.text == "/empty":
-        await state.update_data(comment=None)
+        await state.update_data(comment="")
     else:
         await state.update_data(comment=message.text)
 
@@ -610,7 +612,7 @@ async def get_key_history_str(key_name: str):
         response_strs[-1] += (
             f"*Имя*: `{entry.emp_firstname} {entry.emp_lastname}`\n"
             f"| *Взял в*: `{entry.time_received.strftime('%H:%M (%d.%m.%Y)')}`\n"
-            f"| *Вернул в*: `{entry.time_returned.strftime('%H:%M (%d.%m.%Y)')}`\n"
+            f"{f"| *Вернул в*: `{entry.time_returned.strftime('%H:%M (%d.%m.%Y)')}`\n" if entry.time_returned else ""}"
             f"| *Контакт*: {phone_format(entry.emp_phone)}\n"
             f"{f"| *Комментарии*: \"{escape_markdown(entry.comment)}\"\n" if entry.comment else ""}"
         )
@@ -677,7 +679,12 @@ async def get_emp_history_str(emp_name: str):
         emp_table.get_by_name(first_name, last_name),
         keys_accounting_table.get_all_entries()
     )
-    emp_entries = [entry for entry in entries if entry.emp_firstname == first_name and entry.emp_lastname == last_name]
+    emp_entries = []
+    for entry in entries:
+        if entry.emp_firstname == first_name and entry.emp_lastname == last_name:
+            emp_entries.append(entry)
+        else:
+            print(f"{entry.emp_firstname} {entry.emp_lastname} | {first_name} {last_name}")
     response_strs = [""]
     if emp:
         tg = await bot.get_chat(emp.telegram)
@@ -719,9 +726,11 @@ async def get_emp_history_str(emp_name: str):
 
 @dp.message(Command("not_returned"))
 async def not_returned(message: types.Message):
-    if not await has_role("security", message.from_user.id):
+    user = await emp_table.get_by_telegram(message.from_user.id)
+    if not "user" in user.roles and not "security" in user.roles:
         await message.answer("Вы не имеете доступа к этой команде.")
         return
+
     msg = await message.answer("Поиск ключей...")
 
     keys = await keys_accounting_table.get_not_returned_keys()
@@ -733,8 +742,11 @@ async def not_returned(message: types.Message):
     await msg.delete()
 
     for key in keys:
-        kb = [[InlineKeyboardButton(text="Вернуть", callback_data=f"return_key:{key.key_name}")]]
-        await message.answer(await state_format(key, False), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
+        if "security" in user.roles:
+            kb = [[InlineKeyboardButton(text="Вернуть", callback_data=f"return_key:{key.key_name}")]]
+            await message.answer(await state_format(key, False), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
+        elif "user" in user.roles:
+            await message.answer(await state_format(key, False), parse_mode="Markdown")
 
 
 @dp.callback_query(F.data.startswith("return_key"))

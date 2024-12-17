@@ -256,6 +256,7 @@ class KeysAccountingTable:
         }
 
     async def new_entry(self, key_name: str, emp_firstname: str, emp_lastname: str, emp_phone: str, comment: str = ""):
+        if not comment: comment = ""
         await self.append_entry(Entry(key_name, emp_firstname, emp_lastname, emp_phone, datetime.now(), None, comment))
 
     async def setup_table(self):
@@ -268,6 +269,7 @@ class KeysAccountingTable:
         return (await row_values(self.wks, 1))[0:len(self.keys_headers)]
 
     async def append_entry(self, entry: Entry):
+        print("Appending entry:", entry)
         insert_row = len(await col_values(self.wks, 1)) + 1
         headers = await self.get_headers()
         values = []
