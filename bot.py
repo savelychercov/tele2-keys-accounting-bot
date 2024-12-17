@@ -316,7 +316,7 @@ async def get_key_name(message: types.Message, state: FSMContext):
         await msg.delete()
         await message.answer(
             f"Ключ: {key_name}\n"
-            f"Теперь введите комментарий\n(/empty - без комментария)\n(/cancel для отмены)")
+            f"Теперь введите комментарий\n\n(/empty - без комментария)\n\n(/cancel для отмены)")
         await state.set_state(GetKeyState.waiting_for_comment)
         return
     else:
