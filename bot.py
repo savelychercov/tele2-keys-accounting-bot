@@ -10,6 +10,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
+from datetime import datetime, timedelta
 import asyncio
 import sheets
 import logger
@@ -49,6 +50,16 @@ async def main():
 
 
 # region Utils
+
+
+async def remove_key_after_delay(key, dictionary, delay=600):
+    await asyncio.sleep(delay)
+    if key in dictionary:
+        try:
+            await bot.send_message(chat_id=dictionary[key], text=f"Время запроса на ключ {key} истекло.")
+        except Exception as e:
+            print("Не удалось отправить сообщение пользователю:\n", e)
+        del dictionary[key]
 
 
 def escape_markdown(text: str):
@@ -94,6 +105,31 @@ async def check_registration(user_id: str) -> bool:
 
 # region Backend
 
+requested_keys = {}
+request_delay = 60*10  # 10 minutes
+reminder_delay = 60*60*24  # 24 hours
+
+
+async def time_reminder():
+    while True:
+        try:
+            print("Checking for time reminders...")
+            not_returned_entries = await keys_accounting_table.get_not_returned_keys()
+
+            for entry in not_returned_entries:
+                print(f"Checking {entry.emp_firstname} {entry.emp_lastname} for key {entry.key_name}")
+                if entry.time_received + timedelta(days=3) < datetime.now():
+                    emp = await emp_table.get_by_name(entry.emp_firstname, entry.emp_lastname)
+                    if emp is None:
+                        print(f"Employee {entry.emp_firstname} {entry.emp_lastname} not returned key {entry.key_name} but not found in database for sending notification message")
+                        continue
+                    print("Sending notification message")
+                    await bot.send_message(chat_id=emp.telegram, text=f"Вы взяли ключ {entry.key_name} 3+ дня назад, но не вернули его. Пожалуйста, верните его в ближайшее время.")
+        except Exception as e:
+            logger.err(e, "Error in time_reminder")
+        await asyncio.sleep(reminder_delay)
+
+
 @dp.error()
 async def error_handler(event: ErrorEvent):
     logger.err(event.exception)
@@ -103,7 +139,8 @@ async def error_handler(event: ErrorEvent):
 
 
 @dp.startup()
-async def on_startup(*args, **kwargs):
+async def on_startup(dispatcher: Dispatcher):
+    asyncio.create_task(time_reminder())
     print(f"Bot \'{(await bot.get_me()).username}\' started")
 
 
@@ -119,11 +156,6 @@ class LogCommandsMiddleware(BaseMiddleware):
 
 
 dp.message.middleware.register(LogCommandsMiddleware())
-
-
-@dp.poll()
-async def handle_poll(poll: Poll):
-    print(f"Poll received: {poll.id}")
 
 
 # endregion
@@ -288,7 +320,7 @@ async def get_key(message: types.Message, state: FSMContext):
 
     emp = await emp_table.get_by_telegram(message.from_user.id)
     await state.update_data(emp=emp)
-    await message.answer("Введите название ключа\n(/cancel для отмены)")
+    await message.answer("Введите название ключа или номер базовой станции\n\n(/cancel для отмены)")
     await state.set_state(GetKeyState.waiting_for_key)
 
 
@@ -312,6 +344,11 @@ async def get_key_name(message: types.Message, state: FSMContext):
             await msg.delete()
             await message.answer("Этот ключ уже взят:")
             await message.answer(await get_key_state_str(key_name), reply_markup=types.ReplyKeyboardRemove(), parse_mode="Markdown")
+            await state.clear()
+            return
+        if key_name in requested_keys:
+            await msg.delete()
+            await message.answer("Этот ключ уже запрошен.")
             await state.clear()
             return
         await state.update_data(key=key_name)
@@ -361,7 +398,7 @@ async def get_key_comment(message: types.Message, state: FSMContext):
     emp_from = (await state.get_data())["emp"]
 
     callback_data_approve = f"approve_key:{message.from_user.id}:{key_name}:{comment}"
-    callback_data_deny = f"deny_key:{message.from_user.id}"
+    callback_data_deny = f"deny_key:{message.from_user.id}:{key_name}"
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -373,9 +410,10 @@ async def get_key_comment(message: types.Message, state: FSMContext):
     await bot.send_message(
         chat_id=security_id,
         text=(
-            f"Запрос на выдачу ключей от пользователя @{message.from_user.username}.\n"
+            f"{f"Запрос на выдачу ключей от пользователя @{message.from_user.username}\n" if message.from_user.username else "Запрос на выдачу ключей\n"}"
             f"Ключ: {key_name}\n"
-            f"Имя: {emp_from.first_name} {emp_from.last_name}\n\n"
+            f"Имя: {emp_from.first_name} {emp_from.last_name}\n"
+            f"{f"Комментарий: {comment}\n\n" if comment else ""}"
             "Подтвердите действие:"
         ),
         reply_markup=keyboard,
@@ -383,16 +421,22 @@ async def get_key_comment(message: types.Message, state: FSMContext):
 
     await msg.edit_text("Запрос отправлен охраннику. Ожидайте подтверждения.")
     await state.clear()
+    requested_keys[key_name] = message.from_user.id
+    asyncio.create_task(remove_key_after_delay(key_name, requested_keys, request_delay))
 
 
 @dp.callback_query(F.data.startswith("approve_key"))
 async def approve_key(callback: CallbackQuery) -> None:
     _, user_id, key_name, comment = callback.data.split(":")
+    if key_name not in requested_keys:
+        await callback.message.edit_text(callback.message.text+"\n\nВремя запроса истекло")
+        return
+
     emp = await emp_table.get_by_telegram(int(user_id))
 
     await bot.send_message(
         chat_id=user_id,
-        text="Охранник подтвердил выдачу ключей. Можете взять их.",
+        text="✔ Охранник подтвердил ваш запрос на выдачу ключей",
     )
 
     await callback.message.edit_text("Вы подтвердили выдачу ключей.")
@@ -403,16 +447,24 @@ async def approve_key(callback: CallbackQuery) -> None:
         emp.phone_number,
         comment=comment,
     )
+    if key_name in requested_keys:
+        del requested_keys[key_name]
 
 
 @dp.callback_query(F.data.startswith("deny_key"))
 async def deny_key(callback: CallbackQuery) -> None:
-    _, user_id = callback.data.split(":")
+    _, user_id, key_name = callback.data.split(":")
+    if key_name not in requested_keys:
+        await callback.message.edit_text(callback.message.text+"\n\nВремя запроса истекло")
+        return
+
     await bot.send_message(
         chat_id=user_id,
-        text="Охранник отклонил ваш запрос на выдачу ключей.",
+        text="❌ Охранник отклонил ваш запрос на выдачу ключей.",
     )
     await callback.message.edit_text("Вы отклонили запрос на выдачу ключей.")
+    if key_name in requested_keys:
+        del requested_keys[key_name]
 
 
 async def state_format(entry: sheets.Entry, key_info: bool = True) -> str:
@@ -501,7 +553,7 @@ async def find_key(message: types.Message, state: FSMContext):
         await message.answer("Вы не имеете доступа к этой команде.")
         return
 
-    await message.answer("Введите название или номер ключа для поиска")
+    await message.answer("Введите название ключа или номер базовой станции\n\n(/cancel для отмены)")
     await state.set_state(FindKeyState.waiting_for_key)
 
 
@@ -548,7 +600,7 @@ async def get_key_history(message: types.Message, state: FSMContext):
         await message.answer("Вы не имеете доступа к этой команде.")
         return
 
-    await message.answer("Введите название или номер ключа для поиска")
+    await message.answer("Введите название ключа или номер базовой станции\n\n(/cancel для отмены)")
     await state.set_state(GetKeyHistoryState.waiting_for_key)
 
 
@@ -727,7 +779,7 @@ async def get_emp_history_str(emp_name: str):
 @dp.message(Command("not_returned"))
 async def not_returned(message: types.Message):
     user = await emp_table.get_by_telegram(message.from_user.id)
-    if not "user" in user.roles and not "security" in user.roles:
+    if "user" not in user.roles and "security" not in user.roles:
         await message.answer("Вы не имеете доступа к этой команде.")
         return
 
@@ -744,7 +796,10 @@ async def not_returned(message: types.Message):
     for key in keys:
         if "security" in user.roles:
             kb = [[InlineKeyboardButton(text="Вернуть", callback_data=f"return_key:{key.key_name}")]]
-            await message.answer(await state_format(key, False), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
+            await message.answer(
+                await state_format(key, False),
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+                parse_mode="Markdown")
         elif "user" in user.roles:
             await message.answer(await state_format(key, False), parse_mode="Markdown")
 
@@ -753,7 +808,70 @@ async def not_returned(message: types.Message):
 async def return_key(callback: CallbackQuery):
     key_name = callback.data.split(":")[1]
     await keys_accounting_table.set_return_time_by_key_name(key_name)
-    await callback.message.edit_text("Время возврата записано.")
+    await callback.message.edit_text(f"{callback.message.text}\n\nВремя возврата записано.")
+
+
+class ReturnKeyState(StatesGroup):
+    waiting_for_key = State()
+
+
+@dp.message(Command("return_key"))
+async def return_key(message: types.Message, state: FSMContext):
+    if not await has_role("security", message.from_user.id):
+        await message.answer("Вы не имеете доступа к этой команде.")
+        return
+
+    emp = await emp_table.get_by_telegram(message.from_user.id)
+    await state.update_data(emp=emp)
+    await message.answer("Введите название ключа или номер базовой станции\n\n(/cancel для отмены)")
+    await state.set_state(ReturnKeyState.waiting_for_key)
+
+
+@dp.message(ReturnKeyState.waiting_for_key)
+async def get_key_name(message: types.Message, state: FSMContext):
+    if message.text == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=types.ReplyKeyboardRemove())
+        return
+    msg = await message.answer("Поиск ключа...", reply_markup=types.ReplyKeyboardRemove())
+    key_names = {key.key_name for key in await keys_table.get_all_keys()}
+    not_returned_keys = await keys_accounting_table.get_not_returned_keys()
+    not_returned_key_names = {key.key_name for key in not_returned_keys}
+    similarities = await sheets.find_similar(message.text, key_names)
+
+    if message.text in key_names or len(similarities) == 1:
+        if similarities:
+            key_name = similarities[0]
+        else:
+            key_name = message.text
+        if key_name not in not_returned_key_names:
+            await msg.delete()
+            await message.answer("Этот ключ сейчас на месте:")
+            await message.answer(await get_key_state_str(key_name), reply_markup=types.ReplyKeyboardRemove(), parse_mode="Markdown")
+            await state.clear()
+            return
+        await state.update_data(key=key_name)
+        await msg.delete()
+        kb = [[InlineKeyboardButton(text="Вернуть", callback_data=f"return_key:{key_name}")]]
+        await message.answer(
+            await state_format(next(key for key in not_returned_keys if key.key_name == key_name), True),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+            parse_mode="Markdown")
+        await state.clear()
+        return
+    else:
+        if similarities:
+            kb = []
+            for sim in similarities:
+                kb.append([KeyboardButton(text=sim)])
+            await msg.delete()
+            await message.answer("Выберите ключ из найденных:",
+                                 reply_markup=ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True,
+                                                                  one_time_keyboard=True))
+        else:
+            await msg.delete()
+            await message.answer("Ключ не найден")
+            await state.clear()
 
 
 # endregion
