@@ -735,8 +735,6 @@ async def get_emp_history_str(emp_name: str):
     for entry in entries:
         if entry.emp_firstname == first_name and entry.emp_lastname == last_name:
             emp_entries.append(entry)
-        else:
-            print(f"{entry.emp_firstname} {entry.emp_lastname} | {first_name} {last_name}")
     response_strs = [""]
     if emp:
         tg = await bot.get_chat(emp.telegram)
@@ -762,12 +760,40 @@ async def get_emp_history_str(emp_name: str):
             f"*Ключ*: `{entry.key_name}`\n"
             f"| *Взял в*: `{entry.time_received.strftime('%H:%M (%d.%m.%Y)')}`\n"
             f"{f"| *Вернул в*: `{entry.time_returned.strftime('%H:%M (%d.%m.%Y)')}`\n" if entry.time_returned else ""}"
-            f"| *Контакт*: {phone_format(entry.emp_phone)}\n"
             f"{f"| *Комментарии*: \"{escape_markdown(entry.comment)}\"\n" if entry.comment else ""}"
         )
         response_strs[-1] += "\n"
 
     return response_strs
+
+
+@dp.message(Command("my_keys"))
+async def my_history(message: types.Message):
+    if not await has_role("user", message.from_user.id):
+        await message.answer("Вы не имеете доступа к этой команде.")
+        return
+    user = await emp_table.get_by_telegram(message.from_user.id)
+
+    history_msg_strs = []
+
+    not_returned_entries = await keys_accounting_table.get_not_returned_keys()
+
+    for entry in not_returned_entries:
+        if entry.emp_firstname != user.first_name or entry.emp_lastname != user.last_name:
+            continue
+        history_msg_strs.append(
+            f"*Ключ*: `{entry.key_name}`\n"
+            f"| *Взял в*: `{entry.time_received.strftime('%H:%M (%d.%m.%Y)')}`\n"
+            f"{f"| *Комментарии*: \"{escape_markdown(entry.comment)}\"\n" if entry.comment else ""}"
+        )
+
+    if not history_msg_strs:
+        await message.answer("У вас нет взятых ключей")
+        return
+
+    history_msg_strs.insert(0, f"Ваши активные ключи ({len(history_msg_strs)})")
+    for msg in history_msg_strs:
+        await message.answer(msg, parse_mode="Markdown", reply_markup=types.ReplyKeyboardRemove())
 
 
 # endregion
@@ -795,7 +821,8 @@ async def not_returned(message: types.Message):
 
     for key in keys:
         if "security" in user.roles:
-            kb = [[InlineKeyboardButton(text="Вернуть", callback_data=f"return_key:{key.key_name}")]]
+            user_id = (await emp_table.get_by_name(key.emp_firstname, key.emp_lastname)).telegram
+            kb = [[InlineKeyboardButton(text="Вернуть", callback_data=f"return_key:{key.key_name}:{user_id}")]]
             await message.answer(
                 await state_format(key, False),
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
@@ -806,8 +833,12 @@ async def not_returned(message: types.Message):
 
 @dp.callback_query(F.data.startswith("return_key"))
 async def return_key(callback: CallbackQuery):
-    key_name = callback.data.split(":")[1]
+    key_name, telegram_id = callback.data.split(":")[1:3]
     await keys_accounting_table.set_return_time_by_key_name(key_name)
+    await bot.send_message(
+        chat_id=telegram_id,
+        text=f"Охранник подтвердил возврат ключа: {key_name}",
+    )
     await callback.message.edit_text(f"{callback.message.text}\n\nВремя возврата записано.")
 
 
@@ -852,7 +883,9 @@ async def get_key_name(message: types.Message, state: FSMContext):
             return
         await state.update_data(key=key_name)
         await msg.delete()
-        kb = [[InlineKeyboardButton(text="Вернуть", callback_data=f"return_key:{key_name}")]]
+        key_entry = next(key for key in not_returned_keys if key.key_name == key_name)
+        user_id = (await emp_table.get_by_name(key_entry.emp_firstname, key_entry.emp_lastname)).telegram
+        kb = [[InlineKeyboardButton(text="Вернуть", callback_data=f"return_key:{key_entry.key_name}:{user_id}")]]
         await message.answer(
             await state_format(next(key for key in not_returned_keys if key.key_name == key_name), True),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
