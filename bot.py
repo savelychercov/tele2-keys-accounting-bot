@@ -781,11 +781,22 @@ async def my_history(message: types.Message):
     for entry in not_returned_entries:
         if entry.emp_firstname != user.first_name or entry.emp_lastname != user.last_name:
             continue
-        history_msg_strs.append(
-            f"*Ключ*: `{entry.key_name}`\n"
-            f"| *Взял в*: `{entry.time_received.strftime('%H:%M (%d.%m.%Y)')}`\n"
-            f"{f"| *Комментарии*: \"{escape_markdown(entry.comment)}\"\n" if entry.comment else ""}"
-        )
+        key_data = await keys_table.get_by_name(entry.key_name)
+        if not key_data:
+            history_msg_strs.append(
+                f"*Ключ*: `{entry.key_name}`\n"
+                f"| *Взял в*: `{entry.time_received.strftime('%H:%M (%d.%m.%Y)')}`\n"
+                f"{f"| *Комментарии*: \"{escape_markdown(entry.comment)}\"\n" if entry.comment else ""}"
+            )
+        else:
+            history_msg_strs.append(
+                f"*Ключ*: `{entry.key_name}`\n"
+                f"| *Взял в*: `{entry.time_received.strftime('%H:%M (%d.%m.%Y)')}`\n"
+                f"| *Количество ключей*: `{key_data.count}`\n"
+                f"| *Тип ключа*: `{key_data.key_type}`\n"
+                f"| *Тип аппаратный*: `{key_data.hardware_type}`\n"
+                f"{f"|  *Комментарии*: \"{escape_markdown(entry.comment)}\"\n" if entry.comment else ""}"
+            )
 
     if not history_msg_strs:
         await message.answer("У вас нет взятых ключей")
