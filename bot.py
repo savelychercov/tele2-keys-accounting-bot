@@ -447,7 +447,7 @@ async def approve_key(callback: CallbackQuery) -> None:
         text="✔ Охранник подтвердил ваш запрос на выдачу ключей",
     )
 
-    await callback.message.edit_text(callback.message.text+"\n\nВыдача ключа подтверждена")
+    await callback.message.edit_text(callback.message.text+"\n\n✔ Выдача ключа подтверждена")
     await keys_accounting_table.new_entry(
         key_name,
         emp.first_name,
@@ -470,7 +470,7 @@ async def deny_key(callback: CallbackQuery) -> None:
         chat_id=user_id,
         text="❌ Охранник отклонил ваш запрос на выдачу ключей.",
     )
-    await callback.message.edit_text("Вы отклонили запрос на выдачу ключей.")
+    await callback.message.edit_text(callback.message.text+"\n\n❌ Вы отклонили запрос на выдачу ключей.")
     if key_name in requested_keys:
         del requested_keys[key_name]
 
