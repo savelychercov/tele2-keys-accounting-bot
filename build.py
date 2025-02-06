@@ -12,7 +12,7 @@ current_directory = os.path.dirname(os.path.abspath(__file__))
 
 major_version = "1"
 minor_version = "4"
-patch_version = "0"
+patch_version = "3"
 build_number = "1"
 debug = False
 company_name = "savelychercov"

@@ -535,29 +535,16 @@ class EmployeesTable:
 
 async def main():
     """Test code"""
-
     """kat = KeysAccountingTable()
-    await clear(kat.wks)
+    emp = EmployeesTable()
+    keys = KeysTable()
+
     await kat.setup_table()
-    await kat.new_entry("0001", "Савелий", "Алексеевич", "+7 (999) 999-99-99", "test!")
-    await kat.new_entry("0002", "Савелий", "Алексеевич", "+7 (999) 999-99-99", "test2!")
-    await kat.set_return_time((await kat.get_all_entries())[0])
+    await emp.setup_table()
+    await keys.setup_table()"""
 
-    print(await kat.get_all_entries())
-    print(await kat.get_not_returned_keys())"""
+    raise NotImplementedError
 
-    """kt = KeysTable()
-    await clear(kt.wks)
-    await kt.setup_table()
-    for i in range(10):
-    await kt.new_key(f"000{i}", random.randint(1, 4))
-    print(await kt.get_all_keys())"""
-
-    et = EmployeesTable()
-    # await clear(et.wks)
-    # await et.setup_table()
-    # await et.new_employee("Савелий1", "Алексеевич1", "+7 (999) 999-99-99", "test!", ["admin"])
-    print(await et.get_all_employees())
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -9,6 +9,8 @@ log.txt
 
 */temp/
 /credentials/*
+/credentials_TEST
+/credentials_PROD
 
 # C extensions
 *.so

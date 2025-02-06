@@ -11,6 +11,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
 from datetime import datetime, timedelta
+from requests.exceptions import ConnectionError
 import asyncio
 import sheets
 import logger
@@ -132,9 +133,12 @@ async def time_reminder():
 
 @dp.error()
 async def error_handler(event: ErrorEvent):
-    logger.err(event.exception)
+    if isinstance(event.exception, ConnectionError):
+        logger.log(f"Connection error (Remote end closed connection without response): {event.exception}")
+        return
+    logger.err(event.exception, additional_text="Error while handling command")
     if hasattr(event, "message"):
-        await event.message.answer("Произошла неизвестная ошибка, попробуйте еще раз позже.")
+        await event.message.answer("Произошла ошибка, попробуйте еще раз")
     # await bot.send_message(event, "Произошла неизвестная ошибка, попробуйте еще раз позже.")
 
 
@@ -170,12 +174,16 @@ class FeedbackState(StatesGroup):
 
 @dp.message(Command("feedback"))
 async def send_feedback(message: types.Message, state: FSMContext):
-    await message.answer("Напишите ваш отзыв или предложение:")
+    await message.answer("Напишите ваш отзыв или предложение (будет отправлен только текст)\n\n/cancel - отменить")
     await state.set_state(FeedbackState.waiting_for_feedback)
 
 
 @dp.message(FeedbackState.waiting_for_feedback)
 async def get_feedback(message: types.Message, state: FSMContext):
+    if message.text == "/cancel":
+        await message.answer("Отменено.")
+        await state.clear()
+        return
     logger.log(f"New feedback:\nFrom: {message.from_user.first_name} {message.from_user.last_name} (@{message.from_user.username})\n\n```\n{message.text}```")
     await message.answer("Отправлено.")
     await state.clear()
@@ -439,7 +447,7 @@ async def approve_key(callback: CallbackQuery) -> None:
         text="✔ Охранник подтвердил ваш запрос на выдачу ключей",
     )
 
-    await callback.message.edit_text("Вы подтвердили выдачу ключей.")
+    await callback.message.edit_text(callback.message.text+"\n\nВыдача ключа подтверждена")
     await keys_accounting_table.new_entry(
         key_name,
         emp.first_name,
