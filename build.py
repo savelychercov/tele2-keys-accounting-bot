@@ -12,14 +12,14 @@ current_directory = os.path.dirname(os.path.abspath(__file__))
 
 major_version = "1"
 minor_version = "5"
-patch_version = "1"
+patch_version = "2"
 build_number = "1"
 debug = False
 company_name = "savelychercov"
 product_name = "KeysAccountingBot"
 description = "Telegram bot for accounting keys"
 
-title = f"KeysAccountingBot v{major_version}.{minor_version}"
+title = f"KeysAccountingBot v{major_version}.{minor_version}.{patch_version}"
 
 version_template = f"""
 VSVersionInfo(

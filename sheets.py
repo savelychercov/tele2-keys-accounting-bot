@@ -3,10 +3,8 @@ import gspread
 from datetime import datetime
 import asyncio
 from prettytable import PrettyTable
-from pprint import pp
 import logger
 import json
-import random
 from difflib import SequenceMatcher
 import os
 import sys
@@ -26,8 +24,22 @@ datetime_format = "%d.%m.%Y %H:%M:%S"
 credentials_path = resource_path(os.path.join("credentials", "gspread_credentials.json"))
 tables_path = resource_path(os.path.join("credentials", "spreadsheet_tables.json"))
 last_update_cell = (1, 8)
-# mail keysspreadsheetsbot@keysspreadsheetsbot.iam.gserviceaccount.com
 
+KEYS = "keys_cache"
+K_HEADERS = "keys_headers_cache"
+KEYS_CACHE_TIME = 60*60
+
+EMPS = "employee_cache"
+E_HEADERS = "employee_headers_cache"
+EMPS_CACHE_TIME = 60*5
+
+ACCOUNTING = "keys_accounting_cache"
+A_HEADERS = "keys_accounting_headers_cache"
+ACCOUNTING_CACHE_TIME = 60*5
+
+HEADERS_CACHE_TIME = 60*60
+
+# mail keysspreadsheetsbot@keysspreadsheetsbot.iam.gserviceaccount.com
 
 # endregion
 
@@ -51,8 +63,8 @@ async def find_similar(query: str, strings: list[str]) -> list[str]:
     return matches[:5]
 
 
-async def add_worksheet(spreadsheet: gspread.Spreadsheet, title: str, rows: int, cols: int, index: int = None):
-    await asyncio.to_thread(spreadsheet.add_worksheet, title=title, rows=rows, cols=cols, index=index)
+async def add_worksheet(_spreadsheet: gspread.Spreadsheet, title: str, rows: int, cols: int, index: int = None):
+    await asyncio.to_thread(_spreadsheet.add_worksheet, title=title, rows=rows, cols=cols, index=index)
 
 
 async def update(wks: gspread.Worksheet, cell_str: str, values: list[list]):
@@ -139,7 +151,6 @@ if gs is None:
     print("Setting gspread credentials")
     gs = gspread.service_account(filename=credentials_path)
 
-
 spreadsheet = None
 tables_data = None
 if spreadsheet is None:
@@ -187,6 +198,39 @@ async def change_spreadsheet(url: str):
     return kat, keys, employees
 
 
+cache = {}
+
+
+async def drop_cache():
+    cache.clear()
+
+
+async def add_to_cache(key, value, seconds=60):
+    cache[key] = value
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Added to cache: {key}")
+    asyncio.create_task(remove_from_cache(key, seconds))
+
+
+async def is_in_cache(key):
+    return key in cache
+
+
+async def remove_from_cache(key, seconds=0):
+    if seconds > 0:
+        await asyncio.sleep(seconds)
+    if key in cache:
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Removed from cache: {key}")
+        del cache[key]
+
+
+async def get_from_cache(key):
+    if key in cache:
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Cache hit: {key}")
+        return cache[key]
+    else:
+        return None
+
+
 # endregion
 
 
@@ -217,7 +261,8 @@ class Entry:
         elif isinstance(time_received, datetime):
             self.time_received = time_received
         else:
-            raise TypeError(f"time_received must be a datetime object or a string in '%d.%m.%Y %H:%M:%S' format Current value: {time_received}")
+            raise TypeError(
+                f"time_received must be a datetime object or a string in '%d.%m.%Y %H:%M:%S' format Current value: {time_received}")
 
         if isinstance(time_returned, str) and not time_returned.strip() == "":
             self.time_returned = datetime.strptime(time_returned, datetime_format)
@@ -226,13 +271,14 @@ class Entry:
         elif not time_returned:
             self.time_returned = None
         else:
-            raise TypeError(f"time_returned must be a datetime object or a string in '%d.%m.%Y %H:%M:%S' format. Current value: {time_returned}")
+            raise TypeError(
+                f"time_returned must be a datetime object or a string in '%d.%m.%Y %H:%M:%S' format. Current value: {time_returned}")
 
     def __repr__(self):
         return (
             "----------\n"
             f"Key: {self.key_name}\n"
-            f"Employee: {self.emp_firstname} {self.emp_lastname} ({self.emp_phone})\n"    
+            f"Employee: {self.emp_firstname} {self.emp_lastname} ({self.emp_phone})\n"
             f"Received: {self.time_received.strftime('%d.%m.%Y %H:%M:%S')}\n"
             f"Returned: {self.time_returned.strftime('%d.%m.%Y %H:%M:%S') if self.time_returned else 'Not returned'}\n"
             f"Comment: {self.comment}"
@@ -246,13 +292,13 @@ class KeysAccountingTable:
             td = json.load(f)
         self.wks = spreadsheet.worksheet(td["keys_accounting_wks"])
         self.keys_headers = {
-            "key_name":      "Ключ",
+            "key_name": "Ключ",
             "emp_firstname": "Имя",
-            "emp_lastname":  "Фамилия",
-            "emp_phone":     "Номер телефона",
+            "emp_lastname": "Фамилия",
+            "emp_phone": "Номер телефона",
             "time_received": "Время получения",
             "time_returned": "Время сдачи",
-            "comment":       "Комментарий",
+            "comment": "Комментарий",
         }
 
     async def new_entry(self, key_name: str, emp_firstname: str, emp_lastname: str, emp_phone: str, comment: str = ""):
@@ -262,11 +308,15 @@ class KeysAccountingTable:
     async def setup_table(self):
         await self.check_has_free_rows(1)
         await update(self.wks, cell(1, 1), [list(self.keys_headers.values())])
-        await self.type_last_update()
-        await auto_resize(self.wks, 1, len(self.keys_headers)+1)
+        await auto_resize(self.wks, 1, len(self.keys_headers) + 1)
 
     async def get_headers(self):
-        return (await row_values(self.wks, 1))[0:len(self.keys_headers)]
+        cached = await get_from_cache(A_HEADERS)
+        if cached is not None:
+            return cached
+        result = (await row_values(self.wks, 1))[0:len(self.keys_headers)]
+        await add_to_cache(A_HEADERS, result, HEADERS_CACHE_TIME)
+        return result
 
     async def append_entry(self, entry: Entry):
         print("Appending entry:", entry)
@@ -281,19 +331,18 @@ class KeysAccountingTable:
             values.append(val)
         await self.check_has_free_rows(insert_row)
         await update(self.wks, cell(1, insert_row), [values])
-        await self.type_last_update()
-        await auto_resize(self.wks, 1, len(headers))
+        await remove_from_cache(ACCOUNTING)
+        # await auto_resize(self.wks, 1, len(headers))
 
     async def check_has_free_rows(self, rows_count):
         current_rows = self.wks.row_count
         if current_rows < rows_count:
             await add_rows(self.wks, rows_count - current_rows)
 
-    async def type_last_update(self):
-        text = f"Last update: {datetime.now().strftime(datetime_format)}"
-        await update(self.wks, cell(*last_update_cell[::-1]), [[text]])
-
     async def get_all_entries(self) -> list[Entry]:
+        cached = await get_from_cache(ACCOUNTING)
+        if cached is not None:
+            return cached
         rows = await get_all_values(self.wks)
         rows.pop(0)
         headers = await self.get_headers()
@@ -307,6 +356,7 @@ class KeysAccountingTable:
             except ValueError:
                 print(f"Error in row {index}: {row}")
                 pass
+        await add_to_cache(ACCOUNTING, entries, ACCOUNTING_CACHE_TIME)
         return entries
 
     async def get_not_returned_keys(self) -> list[Entry]:
@@ -321,12 +371,13 @@ class KeysAccountingTable:
         headers = await self.get_headers()
         if time_returned is None:
             time_returned = datetime.now().strftime(datetime_format)
-        index = headers.index(self.keys_headers["time_returned"])+1
+        index = headers.index(self.keys_headers["time_returned"]) + 1
         await update(
             self.wks,
             cell(index, entry.row),
             [[time_returned]]
         )
+        await remove_from_cache(ACCOUNTING)
 
     async def set_return_time_by_key_name(self, key_name: str, time_returned: datetime = None) -> None:
         entries = await self.get_not_returned_keys()
@@ -351,7 +402,7 @@ class KeysTable:
         self.wks = spreadsheet.worksheet(td["keys_wks"])
         self.keys_headers = {
             "key_name": "Ключ",
-            "count":    "Количество",
+            "count": "Количество",
             "key_type": "Тип ключа",
             "hardware_type": "Тип (Аппаратный)",
         }
@@ -366,10 +417,15 @@ class KeysTable:
     async def setup_table(self):
         await self.check_has_free_rows(1)
         await update(self.wks, cell(1, 1), [list(self.keys_headers.values())])
-        await auto_resize(self.wks, 1, len(self.keys_headers)+1)
+        await auto_resize(self.wks, 1, len(self.keys_headers) + 1)
 
     async def get_headers(self):
-        return (await row_values(self.wks, 1))[0:len(self.keys_headers)]
+        cached = await get_from_cache(K_HEADERS)
+        if cached is not None:
+            return cached
+        headers = (await row_values(self.wks, 1))[0:len(self.keys_headers)]
+        await add_to_cache(K_HEADERS, headers, HEADERS_CACHE_TIME)
+        return headers
 
     async def check_has_free_rows(self, rows_count):
         current_rows = self.wks.row_count
@@ -389,9 +445,12 @@ class KeysTable:
             values.append(val)
         await self.check_has_free_rows(insert_row)
         await update(self.wks, cell(1, insert_row), [values])
-        await auto_resize(self.wks, 1, len(self.keys_headers)+1)
+        await remove_from_cache(KEYS)
 
     async def get_all_keys(self) -> list[Key]:
+        cached = await get_from_cache(KEYS)
+        if cached is not None:
+            return cached
         rows = await get_all_values(self.wks)
         rows.pop(0)
         headers = await self.get_headers()
@@ -406,6 +465,7 @@ class KeysTable:
             except ValueError:
                 print(f"Error in table keys in row {row}")
                 pass
+        await add_to_cache(KEYS, keys, KEYS_CACHE_TIME)
         return keys
 
 
@@ -459,10 +519,15 @@ class EmployeesTable:
     async def setup_table(self):
         await self.check_has_free_rows(1)
         await update(self.wks, cell(1, 1), [list(self.keys_headers.values())])
-        await auto_resize(self.wks, 1, len(self.keys_headers)+1)
+        await auto_resize(self.wks, 1, len(self.keys_headers) + 1)
 
     async def get_headers(self):
-        return (await row_values(self.wks, 1))[0:len(self.keys_headers)]
+        cached = await get_from_cache(E_HEADERS)
+        if cached is not None:
+            return cached
+        headers = (await row_values(self.wks, 1))[0:len(self.keys_headers)]
+        await add_to_cache(E_HEADERS, headers, HEADERS_CACHE_TIME)
+        return headers
 
     async def check_has_free_rows(self, rows_count):
         current_rows = self.wks.row_count
@@ -491,9 +556,12 @@ class EmployeesTable:
             values.append(str(val))
         await self.check_has_free_rows(insert_row)
         await update(self.wks, cell(1, insert_row), [values])
-        await auto_resize(self.wks, 1, len(self.keys_headers)+1)
+        await remove_from_cache(EMPS)
 
     async def get_all_employees(self) -> list[Employee]:
+        cached = await get_from_cache(EMPS)
+        if cached is not None:
+            return cached
         rows = await get_all_values(self.wks)
         rows.pop(0)
         headers = await self.get_headers()
@@ -506,6 +574,7 @@ class EmployeesTable:
             except ValueError:
                 print(f"Error in table employees in row {row}")
                 pass
+        await add_to_cache(EMPS, employees, EMPS_CACHE_TIME)
         return employees
 
     async def get_by_telegram(self, telegram: str):
@@ -526,6 +595,7 @@ class EmployeesTable:
         for employee in employees:
             if employee.first_name == first_name and employee.last_name == last_name:
                 return employee
+
 
 # endregion
 
@@ -549,6 +619,4 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 
-
 # endregion
-

@@ -53,6 +53,19 @@ async def main():
 # region Utils
 
 
+def make_serializable(data):
+    if isinstance(data, list):
+        return [make_serializable(item) for item in data]
+    elif isinstance(data, dict):
+        return {key: make_serializable(value) for key, value in data.items()}
+    elif hasattr(data, 'to_dict'):
+        return data.to_dict()
+    else:
+        # Если тип неизвестен и не имеет to_dict(), оставляем его как есть.
+        # Это может вызвать ошибку при попытке сериализации.
+        return str(data)
+
+
 async def remove_key_after_delay(key, dictionary, delay=600):
     await asyncio.sleep(delay)
     if key in dictionary:
@@ -155,7 +168,7 @@ async def on_shutdown(*args, **kwargs):
 
 class LogCommandsMiddleware(BaseMiddleware):
     async def __call__(self, handler, event: Message, data: dict):
-        print(f"Message from {event.from_user.username} ({event.from_user.id}): {event.text}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Message from {event.from_user.username} ({event.from_user.id}): {event.text}")
         return await handler(event, data)
 
 
@@ -924,6 +937,30 @@ async def get_key_name(message: types.Message, state: FSMContext):
             await msg.delete()
             await message.answer("Ключ не найден")
             await state.clear()
+
+
+# endregion
+
+
+# region Administrator Commands
+
+
+@dp.message(Command("drop_cache"))
+async def drop_cache(message: types.Message):
+    if not await has_role("admin", message.from_user.id):
+        await message.answer("Вы не имеете доступа к этой команде.")
+        return
+    await sheets.drop_cache()
+    await message.answer("Кэш очищен")
+
+
+@dp.message(Command("send_cache"))
+async def send_cache(message: types.Message):
+    if not await has_role("admin", message.from_user.id):
+        await message.answer("Вы не имеете доступа к этой команде.")
+        return
+    data = make_serializable(sheets.cache)
+    await message.answer(f"Кэш:\n\n{json.dumps(data, indent=4, ensure_ascii=False)}")
 
 
 # endregion
