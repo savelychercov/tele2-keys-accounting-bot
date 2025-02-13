@@ -11,8 +11,8 @@ run_exe = False
 current_directory = os.path.dirname(os.path.abspath(__file__))
 
 major_version = "1"
-minor_version = "5"
-patch_version = "2"
+minor_version = "6"
+patch_version = "1"
 build_number = "1"
 debug = False
 company_name = "savelychercov"

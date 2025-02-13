@@ -120,7 +120,7 @@ async def check_registration(user_id: str) -> bool:
 # region Backend
 
 requested_keys = {}
-request_delay = 60*10  # 10 minutes
+request_delay = 60*60  # 10 minutes
 reminder_delay = 60*60*24  # 24 hours
 
 
@@ -139,6 +139,8 @@ async def time_reminder():
                         continue
                     print("Sending notification message")
                     await bot.send_message(chat_id=emp.telegram, text=f"Вы взяли ключ {entry.key_name} 3+ дня назад, но не вернули его. Пожалуйста, верните его в ближайшее время.")
+        except ConnectionError as e:
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ERR: Connection error (Remote end closed connection without response)")
         except Exception as e:
             logger.err(e, "Error in time_reminder")
         await asyncio.sleep(reminder_delay)
@@ -147,7 +149,7 @@ async def time_reminder():
 @dp.error()
 async def error_handler(event: ErrorEvent):
     if isinstance(event.exception, ConnectionError):
-        logger.log(f"Connection error (Remote end closed connection without response): {event.exception}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ERR: Connection error (Remote end closed connection without response)")
         return
     logger.err(event.exception, additional_text="Error while handling command")
     if hasattr(event, "message"):
