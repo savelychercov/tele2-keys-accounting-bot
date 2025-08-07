@@ -71,5 +71,6 @@ class Logger:
             error,
             error.__traceback__)
         )
+        print(traceback_str)
         text = f"""{additional_text}\n```python\n{traceback_str}```"""
         self.log(text)

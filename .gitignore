@@ -12,6 +12,8 @@ log.txt
 /credentials_TEST
 /credentials_PROD
 
+*.xlsx
+
 # C extensions
 *.so
 
