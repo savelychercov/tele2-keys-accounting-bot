@@ -21,7 +21,7 @@ def resource_path(relative_path):
 # region Constants
 
 
-datetime_format = "%d.%m.%Y %H:%M:%S"
+datetime_format = "%Y-%m-%d %H:%M:%S"
 tables_path = resource_path(os.path.join("credentials", "excel_tables.json"))
 
 
@@ -299,8 +299,8 @@ class KeysAccountingTable(BaseTable):
             row.append(index)
             try:
                 entries.append(Entry(*row))
-            except ValueError:
-                print(f"Error in row {index}: {row}")
+            except ValueError as err:
+                print(f"Error in row {index}: {row}, {err}")
                 pass
         return entries
 

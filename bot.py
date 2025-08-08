@@ -375,6 +375,7 @@ async def on_shutdown(*args, **kwargs):  # noqa
 
 # region Background Tasks
 
+
 async def time_reminder():
     while True:
         try:
@@ -395,6 +396,8 @@ async def time_reminder():
                     )
         except ConnectionError:
             print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ERR: Connection error")
+        except TelegramForbiddenError:
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ERR: TelegramForbiddenError, bot blocked by user")
         except Exception as e:
             logger.err(e, "Error in time_reminder")
         await asyncio.sleep(Config.REMINDER_DELAY)
@@ -534,16 +537,26 @@ async def get_key_name(message: types.Message, state: FSMContext):
 
     msg = await message.answer("Поиск ключа...", reply_markup=types.ReplyKeyboardRemove())
 
-    # Получаем точное соответствие ключа
     exact_key = keys_table.get_by_name(message.text)
     similarities = await KeyCommandMixin.find_similar_keys(message.text)
     not_returned_keys = {key.key_name for key in keys_accounting_table.get_not_returned_keys()}
 
-    # Определяем ключ для работы
     if exact_key:
         key_name = exact_key.key_name
-    elif similarities:
+
+    elif len(similarities) == 1:
         key_name = similarities[0]
+
+    elif similarities:
+        kb = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text=sim)] for sim in similarities],
+            resize_keyboard=True,
+            one_time_keyboard=True
+        )
+        await msg.delete()
+        await message.answer("Выберите ключ из найденных:", reply_markup=kb)
+        return
+
     else:
         await msg.delete()
         await message.answer(

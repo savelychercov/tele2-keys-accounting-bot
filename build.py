@@ -11,9 +11,9 @@ run_exe = False
 current_directory = os.path.dirname(os.path.abspath(__file__))
 
 major_version = "2"
-minor_version = "1"
+minor_version = "2"
 patch_version = "0"
-build_number = "0"
+build_number = "1"
 debug = False
 company_name = "savelychercov"
 product_name = "KeysAccountingBot"
@@ -66,6 +66,7 @@ files = [
 
 command = [
     start_file,
+    "--optimize=2",
     "--noconfirm",
     "--onefile",
     f"--icon={icon_name}",
@@ -73,6 +74,7 @@ command = [
     "--clean",
     f"--distpath={dist_path}",
     f"--version-file={dist_path}/version_info.txt",
+    "--upx-dir=./upx",
 ]
 
 if no_console:

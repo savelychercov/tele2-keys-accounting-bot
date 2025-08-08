@@ -13,6 +13,7 @@ log.txt
 /credentials_PROD
 
 *.xlsx
+upx
 
 # C extensions
 *.so
